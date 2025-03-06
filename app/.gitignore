@@ -1,0 +1,61 @@
+# Byte-compiled / cached
+__pycache__/
+*.py[cod]
+*.swp
+*.swo
+
+# Virtual environment
+venv/
+.env
+*.env
+
+# Logs and runtime files
+*.log
+logs/
+*.pid
+*.out
+*.err
+
+# Database files
+*.sqlite3
+*.db
+migrations/
+
+# Jupyter Notebooks
+.ipynb_checkpoints/
+
+# System files
+.DS_Store
+Thumbs.db
+
+# Docker
+docker-compose.override.yml
+.dockerignore
+
+# Python packages
+*.egg-info/
+dist/
+build/
+
+# VSCode & PyCharm
+.vscode/
+.idea/
+
+# Proxmox LXC-specific
+.lxc/
+
+# Flask-Specific
+instance/
+config.py
+settings.py
+secrets.json
+
+# Ignore compiled translations
+*.mo
+
+
+# PDFs
+s3_backend/app/downloads/
+
+# Falls einzelne PDFs in anderen Ordnern gespeichert werden
+*.pdf

@@ -1,0 +1,67 @@
+{
+    "info": {
+        "name": "S3 Backend API",
+        "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+    },
+    "item": [
+        {
+            "name": "Get All Guidelines",
+            "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                    "raw": "http://s3-navigator.duckdns.org:5000/guidelines",
+                    "protocol": "http",
+                    "host": ["s3-navigator", "duckdns", "org"],
+                    "port": "5000",
+                    "path": ["guidelines"]
+                }
+            }
+        },
+        {
+            "name": "Get Guideline by ID",
+            "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                    "raw": "http://s3-navigator.duckdns.org:5000/guidelines/1",
+                    "protocol": "http",
+                    "host": ["s3-navigator", "duckdns", "org"],
+                    "port": "5000",
+                    "path": ["guidelines", "1"]
+                }
+            }
+        },
+        {
+            "name": "Search Guidelines",
+            "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                    "raw": "http://s3-navigator.duckdns.org:5000/guidelines/search?q=knee",
+                    "protocol": "http",
+                    "host": ["s3-navigator", "duckdns", "org"],
+                    "port": "5000",
+                    "path": ["guidelines", "search"],
+                    "query": [
+                        {"key": "q", "value": "knee"}
+                    ]
+                }
+            }
+        },
+        {
+            "name": "Download Guideline PDF",
+            "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                    "raw": "http://s3-navigator.duckdns.org:5000/guidelines/1/download",
+                    "protocol": "http",
+                    "host": ["s3-navigator", "duckdns", "org"],
+                    "port": "5000",
+                    "path": ["guidelines", "1", "download"]
+                }
+            }
+        }
+    ]
+}
