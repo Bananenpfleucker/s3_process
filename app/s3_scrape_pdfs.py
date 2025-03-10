@@ -1,31 +1,59 @@
 import os
 import requests
-import sqlite3
+import psycopg2
+import sys
 
 BASE_URL = "https://register.awmf.org"
 API_URL = "https://leitlinien-api.awmf.org/v1/search"
 DOWNLOAD_DIR = "downloads"
-DB_FILE = "leitlinien.db"
-API_KEY = "MkI5Y1VIOEJ0ZGpoelNBVXRNM1E6WVFld0pBUF9RLVdJa012UHVPTmRQUQ=="  # Gefundener API-Key
+
+DB_HOST = "192.168.178.121"
+DB_NAME = "s3_backend_db"
+DB_USER = "postgres"
+DB_PASSWORD = "PostgresPassword"
+DB_PORT = "5432"
+
+API_KEY = "MkI5Y1VIOEJ0ZGpoelNBVXRNM1E6WVFld0pBUF9RLVdJa012UHVPTmRQUQ=="  # API-Key
 
 os.makedirs(DOWNLOAD_DIR, exist_ok=True)
 
+def get_db_connection():
+    try:
+        conn = psycopg2.connect(
+            dbname=DB_NAME,
+            user=DB_USER,
+            password=DB_PASSWORD,
+            host=DB_HOST,
+            port=DB_PORT
+        )
+        return conn
+    except Exception as e:
+        print(f"Fehler bei der Verbindung zur Datenbank: {e}")
+        sys.exit(1)
+
 def init_db():
-    conn = sqlite3.connect(DB_FILE)
+    conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute('''CREATE TABLE IF NOT EXISTS guidelines (
-                        id INTEGER PRIMARY KEY AUTOINCREMENT,
-                        title TEXT,
-                        url TEXT,
+                        id SERIAL PRIMARY KEY,
+                        awmf_guideline_id TEXT NOT NULL,
+                        detail_page_url TEXT,
                         pdf_url TEXT,
-                        pdf BLOB)''')
+                        pdf BYTEA,
+                        extracted_text TEXT,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    )''')
     conn.commit()
+    cursor.close()
     conn.close()
 
+def save_to_db(title, url, pdf_url, pdf_content):
+    conn = get_db_connection()
     cursor = conn.cursor()
-    cursor.execute("INSERT INTO guidelines (title, url, pdf_url, pdf) VALUES (?, ?, ?, ?)",
-                   (title, url, pdf_url, pdf_content))
+    cursor.execute("INSERT INTO guidelines (awmf_guideline_id, detail_page_url, pdf_url, pdf) VALUES (%s, %s, %s, %s)",
+                   (title, url, pdf_url, psycopg2.Binary(pdf_content)))
     conn.commit()
+    cursor.close()
     conn.close()
 
 def fetch_guidelines():
@@ -36,7 +64,7 @@ def fetch_guidelines():
         "Referer": "https://register.awmf.org/"
     }
     offset = 0
-    limit = 50  # Anzahl pro Anfrage
+    limit = 50
     guidelines = []
 
     while True:
@@ -62,7 +90,7 @@ def fetch_guidelines():
             break
 
         for entry in data["records"]:
-            title = entry.get("AWMFGuidelineID", "Unbekannt")  # Anpassung für korrekten Titel
+            title = entry.get("AWMFGuidelineID", "Unbekannt")
             url = entry.get("AWMFDetailPage", "")
             pdf_links = entry.get("links", [])
             pdf_url = next((link["media"] for link in pdf_links if link.get("type") == "longVersion"), "")
@@ -84,7 +112,8 @@ def download_pdf(pdf_url):
     else:
         print(f"Fehler beim Herunterladen: {pdf_url}")
         return None
-def scrapePDFs():
+
+def scrape_pdfs():
     print("Starte AWMF-Leitlinien-Scraping...")
     init_db()
 
@@ -94,15 +123,14 @@ def scrapePDFs():
     for title, detail_url, pdf_url in guidelines:
         print(f"Verarbeite: {title}")
         pdf_content = download_pdf(pdf_url)
-        save_to_db(title, detail_url, pdf_url, pdf_content)
+        if pdf_content:
+            save_to_db(title, detail_url, pdf_url, pdf_content)
 
     print("Scraping abgeschlossen.")
 
 def main():
-    scrapePDFs()
-
-
-
+    scrape_pdfs()
 
 if __name__ == "__main__":
     main()
+

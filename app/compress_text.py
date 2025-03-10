@@ -1,16 +1,24 @@
 import psycopg2
 import ollama
 import textwrap
+from multiprocessing import Pool, cpu_count
 
-# PostgreSQL-Verbindungsdaten
+# PostgreSQL-Datenbankverbindung
 DB_HOST = "192.168.178.121"
 DB_NAME = "s3_backend_db"
 DB_USER = "postgres"
 DB_PASSWORD = "PostgresPassword"
 DB_PORT = "5432"
 
-# Maximale Zeichen pro Chunk für das LLM (damit die Anfragen handhabbar bleiben)
-CHUNK_SIZE = 5000
+# Maximale Zeichenanzahl pro Chunk für die erste Zusammenfassung
+CHUNK_SIZE = 4000  # Kleiner für effizientere Verarbeitung
+
+# Modellwahl
+SMALL_MODEL = "gemma:2b"  # Klein & schnell für erste Verdichtung
+LARGE_MODEL = "gemma:2b"  # Hochwertige medizinische Zusammenfassung
+
+# Maximale Anzahl paralleler Prozesse
+NUM_PROCESSES = max(cpu_count() - 1, 1)  # Nutzt alle CPU-Kerne außer 1 für Performance
 
 
 def get_db_connection():
@@ -29,30 +37,31 @@ def get_db_connection():
         return None
 
 
-def summarize_text(text):
-    """Sendet einen Textblock an Mistral für eine prägnante Zusammenfassung."""
+def summarize_with_small_model(text):
+    """Erste Stufe: Verdichtet lange Texte mit einem schnellen Modell."""
     try:
         response = ollama.chat(
-            model="mistral",
+            model=SMALL_MODEL,
             messages=[
                 {"role": "system",
-                 "content": "Fasse den folgenden medizinischen Text auf Deutsch zusammen, ohne wichtige Details zu verlieren."},
+                 "content": "Du bist ein medizinisches KI-Modell. Fasse den folgenden Text so zusammen, dass die Kernaussagen erhalten bleiben. Verzichte auf allgemeine Erklärungen."},
                 {"role": "user", "content": text}
             ]
         )
         return response["message"]["content"]
     except Exception as e:
-        print(f"Fehler beim Abrufen der Zusammenfassung: {e}")
+        print(f"Fehler bei der ersten Zusammenfassung: {e}")
         return None
 
 
-def summarize_final_text(text):
+def summarize_with_large_model(text):
+    """Zweite Stufe: Hochwertige Zusammenfassung mit Meditron-7B."""
     try:
         response = ollama.chat(
-            model="mistral",
+            model=LARGE_MODEL,
             messages=[
                 {"role": "system",
-                 "content": ""},
+                 "content": "Fasse den folgenden medizinischen Fachtext präzise zusammen. Erhalte alle relevanten Details, aber reduziere unnötige Wiederholungen."},
                 {"role": "user", "content": text}
             ]
         )
@@ -63,23 +72,22 @@ def summarize_final_text(text):
 
 
 def recursive_summarization(full_text):
-    """Zerlegt lange Texte in Blöcke, fasst sie zusammen und erstellt eine End-Zusammenfassung."""
+    """Zerteilt Text in Blöcke, fasst sie mit Gemma-2B zusammen und erstellt eine finale Meditron-7B-Zusammenfassung."""
     text_chunks = textwrap.wrap(full_text, CHUNK_SIZE)
     print(f"Zerlege Text in {len(text_chunks)} Abschnitte à {CHUNK_SIZE} Zeichen.")
 
-    # 1⃣ Erste Runde der Zusammenfassung für jeden Chunk
+    # Erste Stufe der Zusammenfassung mit Gemma-2B
     summaries = []
-    for i, chunk in enumerate(text_chunks, 1):
-        print(f"Zusammenfassung für Abschnitt {i}/{len(text_chunks)}...")
-        summary = summarize_text(chunk)
-        if summary:
-            summaries.append(summary)
+    with Pool(NUM_PROCESSES) as pool:
+        summaries = pool.map(summarize_with_small_model, text_chunks)
 
-    # Falls es mehrere Abschnitte gibt, erstellen wir eine endgültige Zusammenfassung
+    summaries = [s for s in summaries if s]  # Entferne None-Werte
+
+    # Falls es mehrere Abschnitte gibt, nutzen wir Meditron-7B für die finale Zusammenfassung
     if len(summaries) > 1:
         final_text = "\n\n".join(summaries)
-        print("Erstelle eine abschließende Zusammenfassung...")
-        return summarize_final_text(final_text)
+        print(f"Erstelle finale Zusammenfassung mit {LARGE_MODEL}...")
+        return summarize_with_large_model(final_text)
 
     return summaries[0] if summaries else None
 
@@ -93,7 +101,7 @@ def process_one_summary():
 
     cursor = conn.cursor()
 
-    # Prüfen, ob die Spalte `compressed_text` existiert
+    # Prüfen, ob `compressed_text` existiert
     cursor.execute("SELECT column_name FROM information_schema.columns WHERE table_name = 'guidelines'")
     columns = [col[0] for col in cursor.fetchall()]
     if "compressed_text" not in columns:
@@ -110,7 +118,6 @@ def process_one_summary():
         print("Keine neuen Texte zum Zusammenfassen gefunden.")
         cursor.close()
         conn.close()
-        exit(0)
         return
 
     pdf_id, full_text = row
