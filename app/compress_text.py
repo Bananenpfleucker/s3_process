@@ -10,19 +10,17 @@ DB_USER = "postgres"
 DB_PASSWORD = "PostgresPassword"
 DB_PORT = "5432"
 
-# Maximale Zeichenanzahl pro Chunk für die erste Zusammenfassung
-CHUNK_SIZE = 4000  # Kleiner für effizientere Verarbeitung
+# Maximale Zeichenanzahl pro Chunk
+CHUNK_SIZE = 4000
 
 # Modellwahl
 SMALL_MODEL = "gemma:2b"  # Klein & schnell für erste Verdichtung
 LARGE_MODEL = "gemma:2b"  # Hochwertige medizinische Zusammenfassung
 
-# Maximale Anzahl paralleler Prozesse
-NUM_PROCESSES = max(cpu_count() - 1, 1)  # Nutzt alle CPU-Kerne außer 1 für Performance
+NUM_PROCESSES = max(cpu_count() - 1, 1)
 
 
 def get_db_connection():
-    """Stellt eine Verbindung zur PostgreSQL-Datenbank her."""
     try:
         conn = psycopg2.connect(
             dbname=DB_NAME,
@@ -38,7 +36,6 @@ def get_db_connection():
 
 
 def summarize_with_small_model(text):
-    """Erste Stufe: Verdichtet lange Texte mit einem schnellen Modell."""
     try:
         response = ollama.chat(
             model=SMALL_MODEL,
@@ -55,7 +52,7 @@ def summarize_with_small_model(text):
 
 
 def summarize_with_large_model(text):
-    """Zweite Stufe: Hochwertige Zusammenfassung mit Meditron-7B."""
+    """ Meditron-7B. waere ganz gut, lauft aber nicht"""
     try:
         response = ollama.chat(
             model=LARGE_MODEL,
@@ -72,18 +69,16 @@ def summarize_with_large_model(text):
 
 
 def recursive_summarization(full_text):
-    """Zerteilt Text in Blöcke, fasst sie mit Gemma-2B zusammen und erstellt eine finale Meditron-7B-Zusammenfassung."""
+    """Gemma-2B """
     text_chunks = textwrap.wrap(full_text, CHUNK_SIZE)
     print(f"Zerlege Text in {len(text_chunks)} Abschnitte à {CHUNK_SIZE} Zeichen.")
 
-    # Erste Stufe der Zusammenfassung mit Gemma-2B
     summaries = []
     with Pool(NUM_PROCESSES) as pool:
         summaries = pool.map(summarize_with_small_model, text_chunks)
 
-    summaries = [s for s in summaries if s]  # Entferne None-Werte
+    summaries = [s for s in summaries if s]
 
-    # Falls es mehrere Abschnitte gibt, nutzen wir Meditron-7B für die finale Zusammenfassung
     if len(summaries) > 1:
         final_text = "\n\n".join(summaries)
         print(f"Erstelle finale Zusammenfassung mit {LARGE_MODEL}...")
@@ -93,7 +88,6 @@ def recursive_summarization(full_text):
 
 
 def process_one_summary():
-    """Holt einen einzelnen Text aus der DB, fasst ihn zusammen und speichert ihn."""
     conn = get_db_connection()
     if not conn:
         print("Fehler: Keine Verbindung zur Datenbank.")
@@ -101,7 +95,6 @@ def process_one_summary():
 
     cursor = conn.cursor()
 
-    # Prüfen, ob `compressed_text` existiert
     cursor.execute("SELECT column_name FROM information_schema.columns WHERE table_name = 'guidelines'")
     columns = [col[0] for col in cursor.fetchall()]
     if "compressed_text" not in columns:
@@ -109,7 +102,6 @@ def process_one_summary():
         conn.commit()
         print("Spalte 'compressed_text' zur Tabelle 'guidelines' hinzugefügt.")
 
-    # Einen einzelnen Datensatz holen, der noch nicht zusammengefasst wurde
     cursor.execute(
         "SELECT id, extracted_text FROM guidelines WHERE extracted_text IS NOT NULL AND compressed_text IS NULL LIMIT 1")
     row = cursor.fetchone()

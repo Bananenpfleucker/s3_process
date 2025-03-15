@@ -43,14 +43,12 @@ def get_driver():
 
 
 def wait_for_element(driver, xpath, timeout=10):
-    """Wartet auf ein Element auf der Seite."""
     return WebDriverWait(driver, timeout).until(
         EC.presence_of_element_located((By.XPATH, xpath))
     )
 
 
 def parse_date(date_str):
-    """Konvertiert ein deutsches Datum (z. B. '30.08.2024') in 'YYYY-MM-DD'."""
     if not date_str:
         return None
     try:
@@ -64,7 +62,6 @@ def parse_date(date_str):
 
 
 def get_db_connection():
-    """Stellt die Verbindung zur PostgreSQL-Datenbank her."""
     try:
         conn = psycopg2.connect(
             dbname=DB_NAME,
@@ -80,7 +77,6 @@ def get_db_connection():
 
 
 def init_db():
-    """Erstellt die Tabelle guidelines, falls sie nicht existiert."""
     conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute('''CREATE TABLE IF NOT EXISTS guidelines (
@@ -171,7 +167,6 @@ def scrape_detail_page(detail_url):
 
 
 def download_pdf(pdf_url, retries=3):
-    """Lädt eine PDF-Datei herunter, mit Retry-Mechanismus."""
     if not pdf_url:
         return None
 
@@ -188,7 +183,6 @@ def download_pdf(pdf_url, retries=3):
 
 
 def save_to_db(guideline_id, title, detail_url, pdf_url, pdf_content, lversion, stand, valid_until, aktueller_hinweis):
-    """Speichert oder aktualisiert eine Leitlinie in der Datenbank."""
     conn = get_db_connection()
     cursor = conn.cursor()
 
@@ -212,7 +206,6 @@ def save_to_db(guideline_id, title, detail_url, pdf_url, pdf_content, lversion, 
 
 
 def scrape_pdfs():
-    """Startet das Scraping der Leitlinien."""
     init_db()
     guidelines = fetch_guidelines()
 
