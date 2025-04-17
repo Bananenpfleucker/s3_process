@@ -8,12 +8,18 @@ import pytesseract
 
 pytesseract.pytesseract.tesseract_cmd = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
 
+from dotenv import load_dotenv
+from pathlib import Path
+dotenv_path = Path('keys.env')
+load_dotenv(dotenv_path=dotenv_path)
+
+
 # PostgreSQL-Datenbankverbindung
-DB_HOST = "192.168.178.121"
-DB_NAME = "s3_backend_db"
-DB_USER = "postgres"
-DB_PASSWORD = "PostgresPassword"
-DB_PORT = "5432"
+DB_HOST = os.getenv('DB_HOST')
+DB_NAME = os.getenv('DB_NAME')
+DB_USER = os.getenv('DB_USER')
+DB_PASSWORD = os.getenv('DB_PASSWORD')
+DB_PORT = os.getenv('DB_PORT')
 
 
 def get_db_connection():

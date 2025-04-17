@@ -11,12 +11,19 @@ from selenium.webdriver.support import expected_conditions as EC
 from datetime import datetime
 import time
 
-# Datenbankverbindung
-DB_HOST = "192.168.178.121"
-DB_NAME = "s3_backend_db"
-DB_USER = "postgres"
-DB_PASSWORD = "PostgresPassword"
-DB_PORT = "5432"
+from dotenv import load_dotenv
+from pathlib import Path
+
+# Lade Umgebungsvariablen aus einer .env-Datei
+dotenv_path = Path('keys.env')
+load_dotenv(dotenv_path=dotenv_path)
+
+# PostgreSQL-Datenbankverbindung
+DB_HOST = os.getenv('DB_HOST')
+DB_NAME = os.getenv('DB_NAME')
+DB_USER = os.getenv('DB_USER')
+DB_PASSWORD = os.getenv('DB_PASSWORD')
+DB_PORT = os.getenv('DB_PORT')
 
 BASE_URL = "https://register.awmf.org"
 API_URL = "https://leitlinien-api.awmf.org/v1/search"
@@ -43,12 +50,14 @@ def get_driver():
 
 
 def wait_for_element(driver, xpath, timeout=10):
+    """Wartet auf ein Element auf der Seite."""
     return WebDriverWait(driver, timeout).until(
         EC.presence_of_element_located((By.XPATH, xpath))
     )
 
 
 def parse_date(date_str):
+    """Parst Datumswerte in das Format 'YYYY-MM-DD'."""
     if not date_str:
         return None
     try:
@@ -62,6 +71,7 @@ def parse_date(date_str):
 
 
 def get_db_connection():
+    """Erstellt eine Verbindung zur PostgreSQL-Datenbank."""
     try:
         conn = psycopg2.connect(
             dbname=DB_NAME,
@@ -77,26 +87,43 @@ def get_db_connection():
 
 
 def init_db():
+    """Initialisiert die Datenbank und legt die Tabellen an, falls sie nicht existieren."""
     conn = get_db_connection()
     cursor = conn.cursor()
-    cursor.execute('''CREATE TABLE IF NOT EXISTS guidelines (
-                        id SERIAL PRIMARY KEY,
-                        awmf_guideline_id TEXT NOT NULL,
-                        title TEXT,
-                        detail_page_url TEXT,
-                        pdf_url TEXT,
-                        pdf BYTEA,
-                        extracted_text TEXT,
-                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                        compressed_text TEXT,
-                        lversion TEXT,
-                        stand TEXT,
-                        valid_until DATE,
-                        aktueller_hinweis TEXT
-                    )''')
+
+    # Erstelle die Tabelle, falls sie nicht existiert
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS guidelines (
+            id SERIAL PRIMARY KEY,
+            awmf_guideline_id TEXT NOT NULL,
+            title TEXT,
+            detail_page_url TEXT,
+            pdf_url TEXT,
+            pdf BYTEA,
+            extracted_text TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            compressed_text TEXT,
+            lversion TEXT,
+            stand DATE,
+            valid_until DATE,
+            aktueller_hinweis TEXT
+        )
+    ''')
+
+    # Sicherstellen, dass wichtige Indexe existieren
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_guideline_id ON guidelines (awmf_guideline_id);")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_version ON guidelines (lversion);")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_valid_until ON guidelines (valid_until);")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_created_at ON guidelines (created_at);")
+
+    cursor.execute('''CREATE TABLE IF NOT EXISTS prompts (
+                   promptid SERIAL PRIMARY KEY,
+                   promttext TEXT NOT NULL);
+                   ''')
     conn.commit()
     cursor.close()
     conn.close()
+    print("Datenbank erfolgreich initialisiert.")
 
 
 def fetch_guidelines():
@@ -130,12 +157,11 @@ def fetch_guidelines():
 
         for entry in data["records"]:
             guideline_id = entry.get("AWMFGuidelineID", "Unbekannt")
-            title = entry.get("title", "Unbekannt")
             url = entry.get("AWMFDetailPage", "")
             pdf_links = entry.get("links", [])
             pdf_url = next((link["media"] for link in pdf_links if link.get("type") == "longVersion"), "")
             pdf_url = f"{BASE_URL}/assets/guidelines/{pdf_url}" if pdf_url else ""
-            guidelines.append((guideline_id, title, url, pdf_url))
+            guidelines.append((guideline_id, url, pdf_url))
 
         offset += limit
     return guidelines
@@ -147,26 +173,29 @@ def scrape_detail_page(detail_url):
     driver.get(detail_url)
 
     try:
-        wait_for_element(driver, "//ion-col[contains(text(),'Version:')]/following-sibling::ion-col")
+        wait_for_element(driver, "//h1")
     except:
         print(f"Warnung: Keine 'Version' gefunden auf {detail_url}")
 
     def get_text(xpath):
+        """Holt Text von einem bestimmten XPath oder gibt None zurück."""
         try:
             return driver.find_element(By.XPATH, xpath).text.strip()
         except:
             return None
 
+    title = get_text("//h1")
     lversion = get_text("//ion-col[contains(text(),'Version:')]/following-sibling::ion-col")
-    stand = get_text("//ion-col[contains(text(),'Stand:')]/following-sibling::ion-col")
+    stand = parse_date(get_text("//ion-col[contains(text(),'Stand:')]/following-sibling::ion-col"))
     valid_until = parse_date(get_text("//ion-col[contains(text(),'Gültig bis:')]/following-sibling::ion-col"))
     aktueller_hinweis = get_text("//ion-col[contains(text(),'Aktueller Hinweis:')]/following-sibling::ion-col")
 
     driver.quit()
-    return lversion, stand, valid_until, aktueller_hinweis
+    return title, lversion, stand, valid_until, aktueller_hinweis
 
 
 def download_pdf(pdf_url, retries=3):
+    """Lädt das PDF herunter und gibt den Byte-Inhalt zurück."""
     if not pdf_url:
         return None
 
@@ -175,14 +204,15 @@ def download_pdf(pdf_url, retries=3):
         if response.status_code == 200:
             return response.content
         else:
-            print(f"Fehler beim Herunterladen ({pdf_url}), Versuch {attempt+1}/{retries}")
-            time.sleep(2)
+            print(f"Fehler beim Herunterladen ({pdf_url}), Versuch {attempt + 1}/{retries}")
+            time.sleep(1)
 
     print(f"Download fehlgeschlagen: {pdf_url}")
     return None
 
 
 def save_to_db(guideline_id, title, detail_url, pdf_url, pdf_content, lversion, stand, valid_until, aktueller_hinweis):
+    """Speichert die Daten in die Datenbank und überschreibt alte Versionen."""
     conn = get_db_connection()
     cursor = conn.cursor()
 
@@ -190,28 +220,52 @@ def save_to_db(guideline_id, title, detail_url, pdf_url, pdf_content, lversion, 
                    (guideline_id,))
     result = cursor.fetchone()
 
-    if result and result[1] == lversion:
-        print(f"{guideline_id} (Version: {lversion}) existiert bereits in der Datenbank.")
+    if result:
+        db_id, db_version = result
+
+        cursor.execute("UPDATE guidelines SET valid_until = %s WHERE id = %s", (valid_until, db_id))
+
+        if db_version == lversion:
+            # Wenn die Version identisch ist, nur den Titel aktualisieren
+            cursor.execute("UPDATE guidelines SET title = %s WHERE id = %s", (title, db_id))
+            conn.commit()
+            print(f"{guideline_id} (Version: {lversion}) bereits in der DB – Titel aktualisiert.")
+        else:
+            # Version hat sich geändert – aktualisiere alle Daten
+            cursor.execute("""
+                UPDATE guidelines 
+                SET title = %s, detail_page_url = %s, pdf_url = %s, pdf = %s, lversion = %s, stand = %s, 
+                    valid_until = %s, aktueller_hinweis = %s, compressed_text = NULL
+                WHERE id = %s
+            """, (title, detail_url, pdf_url, psycopg2.Binary(pdf_content) if pdf_content else None,
+                  lversion, stand, valid_until, aktueller_hinweis, db_id))
+            conn.commit()
+            print(f"{guideline_id} (Neue Version: {lversion}) – Daten aktualisiert.")
     else:
+        # Neuer Eintrag
         cursor.execute("""
-            INSERT INTO guidelines (awmf_guideline_id, title, detail_page_url, pdf_url, pdf, lversion, stand, valid_until, aktueller_hinweis)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
-        """, (guideline_id, title, detail_url, pdf_url, psycopg2.Binary(pdf_content) if pdf_content else None, lversion,
-              stand, valid_until, aktueller_hinweis))
+            INSERT INTO guidelines (
+                awmf_guideline_id, title, detail_page_url, pdf_url, pdf,
+                lversion, stand, valid_until, aktueller_hinweis, compressed_text
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, NULL)
+        """, (guideline_id, title, detail_url, pdf_url,
+              psycopg2.Binary(pdf_content) if pdf_content else None,
+              lversion, stand, valid_until, aktueller_hinweis))
         conn.commit()
-        print(f"{guideline_id} (Version: {lversion}) erfolgreich gespeichert.")
+        print(f"{guideline_id} (Neue Eintrag)")
 
     cursor.close()
     conn.close()
 
 
 def scrape_pdfs():
+    """Holt Daten von der API und verarbeitet sie."""
     init_db()
     guidelines = fetch_guidelines()
 
-    for guideline_id, title, detail_url, pdf_url in guidelines:
+    for guideline_id, detail_url, pdf_url in guidelines:
         print(f"Verarbeite: {guideline_id}")
-        lversion, stand, valid_until, aktueller_hinweis = scrape_detail_page(detail_url)
+        title, lversion, stand, valid_until, aktueller_hinweis = scrape_detail_page(detail_url)
         pdf_content = download_pdf(pdf_url)
         save_to_db(guideline_id, title, detail_url, pdf_url, pdf_content, lversion, stand, valid_until,
                    aktueller_hinweis)
